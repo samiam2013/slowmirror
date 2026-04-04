@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -26,11 +28,79 @@ func main() {
 
 	log.Println("Database initialized, building routes")
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", view(db))
+	mux.HandleFunc("GET /", dashboard())
+	eventsChan := make(chan event)
+	// Start the event broadcaster in a separate goroutine
+	go eventBroadcast(eventsChan, subscribers)
 	mux.HandleFunc("POST /report", report(db))
+	mux.HandleFunc("GET /events", func(w http.ResponseWriter, r *http.Request) {
+		subscriptionChan := subscribeToEvents()
+		eventSubscribe(subscriptionChan)(w, r)
+	})
+	mux.HandleFunc("GET /view", view(db))
 
 	log.Println("Starting server")
 	http.ListenAndServe(":8080", mux)
+}
+
+var subscribers []chan event
+
+func subscribeToEvents() chan event {
+	subscriptionChan := make(chan event)
+	subscribers = append(subscribers, subscriptionChan)
+	return subscriptionChan
+}
+
+func eventBroadcast(eventChan chan event, subscriptionList []chan event) {
+	for {
+		e := <-eventChan
+		for _, sub := range subscriptionList {
+			sub <- e
+		}
+	}
+}
+
+func dashboard() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		b, err := os.ReadFile("./dashboard.html")
+		if err != nil {
+			log.Printf("Failed to read dashboard file: %v", err)
+			http.Error(w, "Failed to load dashboard", http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(b)
+	}
+}
+
+type event struct {
+	WeightEMAlbs float64   `json:"weight_ema_lbs"`
+	TrendArrow   string    `json:"trend_arrow"`
+	Timestamp    time.Time `json:"timestamp"`
+}
+
+func eventSubscribe(eventSubscription chan event) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// This is a placeholder for the SSE endpoint that will stream weight events to the dashboard
+		// In a real implementation, this would listen for new weight entries and calculate the EMA and trend arrow
+		// For now, it just sends a dummy event every 5 seconds
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.(http.Flusher).Flush()
+
+		for {
+			select {
+			case e := <-eventSubscription:
+				fmt.Fprintf(w, "data: {\"weight_ema_lbs\": %.1f, \"trend_arrow\": \"%s\", \"timestamp\": \"%s\"}\n\n", e.WeightEMAlbs, e.TrendArrow, e.Timestamp.Format(time.RFC3339))
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+			case <-r.Context().Done():
+				log.Println("SSE connection closed")
+				return
+			}
+		}
+	}
 }
 
 func view(db *sql.DB) http.HandlerFunc {

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Weight</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #111;
+    color: #eee;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100dvh;
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  #status {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    font-size: 1rem;
+  }
+
+  .dot {
+    display: inline-block;
+    width: 0.7em;
+    height: 0.7em;
+    border-radius: 50%;
+    margin-right: 0.3em;
+    vertical-align: middle;
+  }
+  .dot.connected { background: #4a4; }
+  .dot.disconnected { background: #a44; }
+
+  #ema {
+    font-size: 28vw;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+
+  #trend {
+    font-size: 14vw;
+    line-height: 1;
+    margin-top: 1vw;
+  }
+
+  #timestamp {
+    font-size: 3vw;
+    color: #666;
+    margin-top: 2vw;
+  }
+
+  #waiting {
+    font-size: 4vw;
+    color: #444;
+  }
+
+  /* phone landscape / small viewports: tighten up */
+  @media (max-height: 500px) {
+    #ema { font-size: 22vh; }
+    #trend { font-size: 12vh; }
+    #timestamp { font-size: 3vh; }
+    #waiting { font-size: 4vh; }
+  }
+
+  .trend-up      { color: #e55; }
+  .trend-rising  { color: #e90; }
+  .trend-sideways { color: #888; }
+  .trend-dropping { color: #6c5; }
+  .trend-down    { color: #4a4; }
+</style>
+</head>
+<body>
+
+<div id="status"><span class="dot disconnected" id="dot"></span><span id="status-text">connecting</span></div>
+
+<div id="waiting">waiting for data…</div>
+<div id="ema" style="display:none"></div>
+<div id="trend" style="display:none"></div>
+<div id="timestamp" style="display:none"></div>
+
+<script>
+const ARROWS = {
+  up:       '↑',
+  rising:   '↗',
+  sideways: '→',
+  dropping: '↘',
+  down:     '↓',
+};
+
+const elEma       = document.getElementById('ema');
+const elTrend     = document.getElementById('trend');
+const elTimestamp  = document.getElementById('timestamp');
+const elWaiting   = document.getElementById('waiting');
+const elDot       = document.getElementById('dot');
+const elStatus    = document.getElementById('status-text');
+
+function render(data) {
+  elWaiting.style.display = 'none';
+  elEma.style.display = '';
+  elTrend.style.display = '';
+  elTimestamp.style.display = '';
+
+  elEma.textContent = parseFloat(data.ema).toFixed(1);
+
+  const t = (data.trend || '').toLowerCase();
+  elTrend.textContent = ARROWS[t] || '?';
+  elTrend.className = 'trend-' + t;
+
+  if (data.timestamp) {
+    const d = new Date(data.timestamp);
+    elTimestamp.textContent = d.toLocaleString();
+  }
+}
+
+function setConnected(ok) {
+  elDot.className = 'dot ' + (ok ? 'connected' : 'disconnected');
+  elStatus.textContent = ok ? 'live' : 'reconnecting';
+}
+
+let reconnectDelay = 1000;
+
+function connect() {
+  const es = new EventSource('/events');
+
+  es.onopen = () => {
+    setConnected(true);
+    reconnectDelay = 1000;
+  };
+
+  es.onmessage = (e) => {
+    try {
+      render(JSON.parse(e.data));
+    } catch (err) {
+      console.error('parse error:', err, e.data);
+    }
+  };
+
+  es.onerror = () => {
+    es.close();
+    setConnected(false);
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+  };
+}
+
+connect();
+</script>
+</body>
+</html>
