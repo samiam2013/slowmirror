@@ -32,7 +32,7 @@ func main() {
 	eventsChan := make(chan event)
 	// Start the event broadcaster in a separate goroutine
 	go eventBroadcast(eventsChan, subscribers)
-	mux.HandleFunc("POST /report", report(db))
+	mux.HandleFunc("POST /report", report(db, eventsChan))
 	mux.HandleFunc("GET /events", func(w http.ResponseWriter, r *http.Request) {
 		subscriptionChan := subscribeToEvents()
 		eventSubscribe(subscriptionChan)(w, r)
@@ -43,20 +43,26 @@ func main() {
 	http.ListenAndServe(":8080", mux)
 }
 
-var subscribers []chan event
+var subsBacking = make([]chan event, 0)
+var subscribers = &subsBacking
 
 func subscribeToEvents() chan event {
 	subscriptionChan := make(chan event)
-	subscribers = append(subscribers, subscriptionChan)
+	new := append(*subscribers, subscriptionChan)
+	*subscribers = new
+	log.Printf("New subscriber added, total subscribers: %d", len(*subscribers))
 	return subscriptionChan
 }
 
-func eventBroadcast(eventChan chan event, subscriptionList []chan event) {
+func eventBroadcast(eventChan chan event, subscriptionList *[]chan event) {
 	for {
+		log.Println("Waiting for new event to broadcast")
 		e := <-eventChan
-		for _, sub := range subscriptionList {
+		for _, sub := range *subscriptionList {
+			log.Println("Broadcasting event to subscriber")
 			sub <- e
 		}
+		log.Println("Event broadcast complete")
 	}
 }
 
@@ -73,8 +79,8 @@ func dashboard() http.HandlerFunc {
 }
 
 type event struct {
-	WeightEMAlbs float64   `json:"weight_ema_lbs"`
-	TrendArrow   string    `json:"trend_arrow"`
+	WeightEMAlbs float64   `json:"ema"`
+	TrendArrow   string    `json:"trend"`
 	Timestamp    time.Time `json:"timestamp"`
 }
 
@@ -91,7 +97,8 @@ func eventSubscribe(eventSubscription chan event) http.HandlerFunc {
 		for {
 			select {
 			case e := <-eventSubscription:
-				fmt.Fprintf(w, "data: {\"weight_ema_lbs\": %.1f, \"trend_arrow\": \"%s\", \"timestamp\": \"%s\"}\n\n", e.WeightEMAlbs, e.TrendArrow, e.Timestamp.Format(time.RFC3339))
+				log.Println("Sending event to subscriber")
+				fmt.Fprintf(w, "data: {\"ema\": %.1f, \"trend\": \"%s\", \"timestamp\": \"%s\"}\n\n", e.WeightEMAlbs, e.TrendArrow, e.Timestamp.Format(time.RFC3339))
 				if f, ok := w.(http.Flusher); ok {
 					f.Flush()
 				}
@@ -163,7 +170,7 @@ func view(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func report(db *sql.DB) http.HandlerFunc {
+func report(db *sql.DB, eventChan chan event) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		kgInputRaw := r.FormValue("kg")
 		kgInput, err := strconv.ParseFloat(kgInputRaw, 32)
@@ -180,6 +187,13 @@ func report(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		log.Printf("Weight %.2f kg saved successfully", kgInput)
+
+		eventChan <- event{
+			WeightEMAlbs: kgInput * kgToLbs, // In a real implementation, this would be the calculated EMA value
+			TrendArrow:   "sideways",
+			Timestamp:    time.Now(),
+		}
+		log.Printf("Event sent for weight: %.2f kg", kgInput)
 		fmt.Fprintln(w, "Weight reported successfully")
 	}
 }
