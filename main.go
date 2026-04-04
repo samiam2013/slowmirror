@@ -104,10 +104,22 @@ func eventSubscribe(eventSubscription chan event) http.HandlerFunc {
 				}
 			case <-r.Context().Done():
 				log.Println("SSE connection closed")
+				unsubscribeFromEvents(eventSubscription)
 				return
 			}
 		}
 	}
+}
+
+func unsubscribeFromEvents(eventSubscription chan event) {
+	newSubscribers := make([]chan event, 0)
+	for _, sub := range *subscribers {
+		if sub != eventSubscription {
+			newSubscribers = append(newSubscribers, sub)
+		}
+	}
+	*subscribers = newSubscribers
+	log.Printf("Subscriber removed, total subscribers: %d", len(*subscribers))
 }
 
 func view(db *sql.DB) http.HandlerFunc {
