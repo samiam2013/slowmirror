@@ -33,3 +33,7 @@ go.work.sum
 
 weight_historical.json
 weight.db
+
+# build output and logs
+slowmirror
+slowmirror.log
