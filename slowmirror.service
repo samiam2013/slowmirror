@@ -1,0 +1,18 @@
+[Unit]
+Description=Slowmirror weight tracking server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/sam/git/samiam2013/slowmirror
+Environment="PATH=/usr/local/go/bin:/usr/bin:/bin"
+ExecStartPre=/usr/local/go/bin/go build -o slowmirror .
+ExecStart=/home/sam/git/samiam2013/slowmirror/slowmirror
+StandardOutput=append:/home/sam/git/samiam2013/slowmirror/slowmirror.log
+StandardError=append:/home/sam/git/samiam2013/slowmirror/slowmirror.log
+User=sam
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
