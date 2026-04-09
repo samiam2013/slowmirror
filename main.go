@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -116,8 +117,12 @@ func eventSubscribe(eventSubscription chan event) http.HandlerFunc {
 		for {
 			select {
 			case e := <-eventSubscription:
-				fmt.Fprintf(w, "data: {\"ema\": %.1f, \"trend\": \"%s\", \"timestamp\": \"%s\"}\n\n",
-					e.WeightEMAlbs, e.TrendArrow, e.Timestamp.Format(time.RFC3339))
+				render, err := json.Marshal(e)
+				if err != nil {
+					log.Printf("Failed to marshal event: %v", err)
+					continue
+				}
+				fmt.Fprintf(w, "data: %s\n\n", render)
 				w.(http.Flusher).Flush()
 			case <-ticker.C:
 				fmt.Fprintf(w, ": keepalive\n\n")
@@ -160,6 +165,56 @@ func computeEMA(db *sql.DB) (float64, error) {
 	return ema, rows.Err()
 }
 
+// computeTrendArrow returns "up", "rising", "sideways", "falling", or "down" based on the weekly average of 21 days
+// if the average is less than 0.5 lb per week, it's "sideways".
+// If it's between 0.5 and 2 lb per week, it's "rising" or "falling".
+// If it's more than 2 lb per week, it's "up" or "down".
+func computeTrendArrow(db *sql.DB) (string, error) {
+	rows, err := db.Query(`
+		SELECT AVG(kg)
+		FROM weights
+		WHERE reported_at >= datetime('now', '-21 days')
+		GROUP BY date(reported_at)
+		ORDER BY date(reported_at) ASC`)
+	if err != nil {
+		return "sideways", err
+	}
+	defer rows.Close()
+
+	var weights []float64
+	for rows.Next() {
+		var dailyAvg float64
+		if err := rows.Scan(&dailyAvg); err != nil {
+			continue
+		}
+		weights = append(weights, dailyAvg)
+	}
+	if len(weights) < 2 {
+		return "sideways", nil
+	}
+
+	first := weights[0]
+	last := weights[len(weights)-1]
+	deltaKg := last - first
+	deltaLbs := deltaKg * kgToLbs
+	deltaPerWeek := deltaLbs / (float64(len(weights)-1) / 7)
+
+	lowerThreshold := 0.25
+	upperThreshold := 1.0
+	switch {
+	case deltaPerWeek > upperThreshold:
+		return "up", nil
+	case deltaPerWeek > lowerThreshold:
+		return "rising", nil
+	case deltaPerWeek < -upperThreshold:
+		return "down", nil
+	case deltaPerWeek < -lowerThreshold:
+		return "falling", nil
+	default:
+		return "sideways", nil
+	}
+}
+
 func report(db *sql.DB, eventChan chan event) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		kgInputRaw := r.FormValue("kg")
@@ -183,10 +238,15 @@ func report(db *sql.DB, eventChan chan event) http.HandlerFunc {
 			ema = kgInput
 		}
 
+		trendStr, err := computeTrendArrow(db)
+		if err != nil {
+			log.Printf("Failed to compute trend: %v", err)
+			trendStr = "sideways"
+		}
 		select {
 		case eventChan <- event{
 			WeightEMAlbs: ema * kgToLbs,
-			TrendArrow:   "sideways",
+			TrendArrow:   trendStr,
 			Timestamp:    time.Now(),
 		}:
 		default:
