@@ -32,7 +32,7 @@ go.work.sum
 # .vscode/
 
 weight_historical.json
-weight.db
+slowmirror.db
 
 # build output and logs
 slowmirror
