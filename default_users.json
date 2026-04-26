@@ -1,0 +1,19 @@
+{
+    "users": [
+        {
+            "name": "sam",
+            "weight_kg": 106,
+            "email": "samiam2013@gmail.com"
+        },
+        {
+            "name": "hannah",
+            "weight_kg": 146.5,
+            "email": "hnorman550@gmail.com"
+        },
+        {
+            "name": "alex (cat)",
+            "weight_kg": 4.5,
+            "email": "alexthecat@example.com"
+        }
+    ]
+}
