@@ -22,7 +22,7 @@ const (
 
 func main() {
 	log.Println("Starting weight tracking server")
-	db, err := sql.Open("sqlite3", "weight.db")
+	db, err := sql.Open("sqlite3", "slowmirror.db")
 	if err != nil {
 		log.Fatal(err)
 	}
