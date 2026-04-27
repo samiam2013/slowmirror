@@ -33,6 +33,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /favicon.ico", favicon())
 	mux.HandleFunc("GET /", dashboard())
 	eventsChan := make(chan event, 1)
 	go eventBroadcast(eventsChan)
@@ -44,7 +45,8 @@ func main() {
 	})
 
 	log.Println("Listening on :8080")
-	http.ListenAndServe(":8080", mux)
+	err = http.ListenAndServe(":8080", mux)
+	log.Fatal(err)
 }
 
 var (
@@ -168,56 +170,6 @@ func computeEMA(db *sql.DB, userID int) (float64, error) {
 	return ema, rows.Err()
 }
 
-// computeTrendArrow returns "up", "rising", "sideways", "falling", or "down" based on the weekly average of 21 days
-// if the average is less than 0.5 lb per week, it's "sideways".
-// If it's between 0.5 and 2 lb per week, it's "rising" or "falling".
-// If it's more than 2 lb per week, it's "up" or "down".
-func computeTrendArrow(db *sql.DB) (string, error) {
-	rows, err := db.Query(`
-		SELECT AVG(kg)
-		FROM weights
-		WHERE reported_at >= datetime('now', '-21 days')
-		GROUP BY date(reported_at)
-		ORDER BY date(reported_at) ASC`)
-	if err != nil {
-		return "sideways", err
-	}
-	defer rows.Close()
-
-	var weights []float64
-	for rows.Next() {
-		var dailyAvg float64
-		if err := rows.Scan(&dailyAvg); err != nil {
-			continue
-		}
-		weights = append(weights, dailyAvg)
-	}
-	if len(weights) < 2 {
-		return "sideways", nil
-	}
-
-	first := weights[0]
-	last := weights[len(weights)-1]
-	deltaKg := last - first
-	deltaLbs := deltaKg * kgToLbs
-	deltaPerWeek := deltaLbs / (float64(len(weights)-1) / 7)
-
-	lowerThreshold := 0.25
-	upperThreshold := 1.0
-	switch {
-	case deltaPerWeek > upperThreshold:
-		return "up", nil
-	case deltaPerWeek > lowerThreshold:
-		return "rising", nil
-	case deltaPerWeek < -upperThreshold:
-		return "down", nil
-	case deltaPerWeek < -lowerThreshold:
-		return "falling", nil
-	default:
-		return "sideways", nil
-	}
-}
-
 func report(db *sql.DB, eventChan chan event) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		kgInputRaw := r.FormValue("kg")
@@ -237,12 +189,6 @@ func report(db *sql.DB, eventChan chan event) http.HandlerFunc {
 			return
 		}
 
-		trendArrow, err := computeUserTrendArrow(db, userID)
-		if err != nil {
-			log.Printf("Failed to compute trend: %v", err)
-			trendArrow = "sideways"
-		}
-
 		_, err = db.Exec("INSERT INTO weight (kg, user_id) VALUES (?, ?)", kgInput, userID)
 		if err != nil {
 			log.Printf("Failed to save weight: %v", err)
@@ -255,6 +201,12 @@ func report(db *sql.DB, eventChan chan event) http.HandlerFunc {
 		if err != nil {
 			log.Printf("Failed to compute EMA: %v", err)
 			ema = kgInput
+		}
+
+		trendArrow, err := computeUserTrendArrow(db, userID)
+		if err != nil {
+			log.Printf("Failed to compute trend: %v", err)
+			trendArrow = "sideways"
 		}
 
 		select {
@@ -421,4 +373,17 @@ func computeUserTrendArrow(db *sql.DB, userID int) (string, error) {
 		return "rising", nil // some increase
 	}
 	return "sideways", nil // no significant change
+}
+
+func favicon() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		b, err := os.ReadFile("./favicon.ico")
+		if err != nil {
+			log.Printf("Failed to read favicon: %v", err)
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/x-icon")
+		w.Write(b)
+	}
 }
